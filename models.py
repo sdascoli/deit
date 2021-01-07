@@ -8,7 +8,8 @@ import torch
 import torch.nn as nn
 from functools import partial
 
-from timm.models.vision_transformer import VisionTransformer, _cfg
+from local_init import VisionTransformer
+from timm.models.vision_transformer import _cfg #, VisionTransformer
 from timm.models.registry import register_model
 
 
