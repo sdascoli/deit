@@ -34,7 +34,7 @@ def get_args_parser():
     parser.add_argument('--epochs', default=300, type=int)
 
     # Model parameters
-    parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
+    parser.add_argument('--model', default='deit_tiny_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
 
@@ -158,6 +158,13 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    # locality parameters
+    parser.add_argument('--use_local_init', default=1, type=int,
+                        help='whether to use the local init')
+    parser.add_argument('--local_up_to_layer', default=3, type=int,
+                        help='number of local layers')
+    
     return parser
 
 
@@ -223,6 +230,8 @@ def main(args):
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
         drop_block_rate=args.drop_block,
+        local_up_to_layer=args.local_up_to_layer,
+        use_local_init=args.use_local_init
     )
 
     # TODO: finetuning

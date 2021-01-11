@@ -117,11 +117,20 @@ def main():
 
     executor.update_parameters(name="deit")
 
-    args.dist_url = get_init_file().as_uri()
-    args.output_dir = args.job_dir
+    jobs = []
+    with ex.batch():
+        for local_up_to_layer in range(6):
+            for use_local_init in [0,1]:
+                
+                args.dist_url = get_init_file().as_uri()
+                args.output_dir = args.job_dir
+                args.local_up_to_layer=local_up_to_layer
+                args.use_local_init=use_local_init
 
-    trainer = Trainer(args)
-    job = executor.submit(trainer)
+                trainer = Trainer(args)
+                job = executor.submit(trainer)
+                jobs.append(job)
+
 
     print("Submitted job_id:", job.job_id)
 
