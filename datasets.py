@@ -6,12 +6,50 @@
 #
 import os
 import json
+import random
 
 from torchvision import datasets, transforms
-from torchvision.datasets.folder import ImageFolder, default_loader
+from torchvision.datasets.folder import ImageFolder, DatasetFolder, default_loader
 
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data import create_transform
+
+from typing import Any, Callable, cast, Dict, List, Optional, Tuple
+IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp')
+def has_file_allowed_extension(filename: str, extensions: Tuple[str, ...]) -> bool:
+    return filename.lower().endswith(extensions)
+
+def make_subsampled_dataset(
+        directory, class_to_idx, extensions=None,is_valid_file=None, sampling_ratio=1.):
+
+    instances = []
+    directory = os.path.expanduser(directory)
+    both_none = extensions is None and is_valid_file is None
+    both_something = extensions is not None and is_valid_file is not None
+    if both_none or both_something:
+        raise ValueError("Both extensions and is_valid_file cannot be None or not None at the same time")
+    if extensions is not None:
+        def is_valid_file(x: str) -> bool:
+            return has_file_allowed_extension(x, cast(Tuple[str, ...], extensions))
+    is_valid_file = cast(Callable[[str], bool], is_valid_file)
+    for target_class in sorted(class_to_idx.keys()):
+        class_index = class_to_idx[target_class]
+        target_dir = os.path.join(directory, target_class)
+        if not os.path.isdir(target_dir):
+            continue
+        num_instances = int(len(os.listdir(target_dir))*sampling_ratio)
+        i=0
+        for root, _, fnames in sorted(os.walk(target_dir, followlinks=True)):
+            for fname in sorted(fnames):
+                if i==num_instances :
+                    break
+                path = os.path.join(root, fname)
+                if is_valid_file(path):
+                    item = path, class_index
+                    instances.append(item)
+                    i+=1
+    return instances
+
 
 
 class INatDataset(ImageFolder):
@@ -56,8 +94,43 @@ class INatDataset(ImageFolder):
 
     # __getitem__ and __len__ inherited from ImageFolder
 
+class SubsampledDatasetFolder(DatasetFolder):
 
-def build_dataset(is_train, args):
+    def __init__(self, root, loader, extensions=None, transform=None, target_transform=None, is_valid_file=None, sampling_ratio=1.):
+
+        super(DatasetFolder, self).__init__(root, transform=transform,
+                                            target_transform=target_transform)
+        
+        classes, class_to_idx = self._find_classes(self.root)
+        samples = make_subsampled_dataset(self.root, class_to_idx, extensions, is_valid_file, sampling_ratio=sampling_ratio)
+
+        if len(samples) == 0:
+            msg = "Found 0 files in subfolders of: {}\n".format(self.root)
+            if extensions is not None:
+                msg += "Supported extensions are: {}".format(",".join(extensions))
+            raise RuntimeError(msg)
+
+        self.loader = loader
+        self.extensions = extensions
+
+        self.classes = classes
+        self.class_to_idx = class_to_idx
+        self.samples = samples
+        self.targets = [s[1] for s in samples]
+
+    # __getitem__ and __len__ inherited from DatasetFolder
+
+
+class ImageNetDataset(SubsampledDatasetFolder):
+    def __init__(self, root, transform=None, target_transform=None, loader=default_loader, is_valid_file=None, sampling_ratio=1.):
+        super(ImageNetDataset, self).__init__(root, loader, IMG_EXTENSIONS if is_valid_file is None else None,
+                                          transform=transform,
+                                          target_transform=target_transform,
+                                              is_valid_file=is_valid_file, sampling_ratio=sampling_ratio)
+        self.imgs = self.samples
+
+
+def build_dataset(is_train, args, sampling_ratio=1):
     transform = build_transform(is_train, args)
 
     if args.data_set == 'CIFAR':
@@ -65,7 +138,7 @@ def build_dataset(is_train, args):
         nb_classes = 100
     elif args.data_set == 'IMNET':
         root = os.path.join(args.data_path, 'train' if is_train else 'val')
-        dataset = datasets.ImageFolder(root, transform=transform)
+        dataset = ImageNetDataset(root, transform=transform, sampling_ratio=sampling_ratio)
         nb_classes = 1000
     elif args.data_set == 'INAT':
         dataset = INatDataset(args.data_path, train=is_train, year=2018,

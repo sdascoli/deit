@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 from functools import partial
@@ -40,15 +39,11 @@ class Mlp(nn.Module):
         return x
 
 
-
-
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=8, num_patches=196, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., use_local_init=True):
+    def __init__(self, dim, num_heads=8, num_patches=196, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., use_local_init=True, rel_indices=None):
         super().__init__()
         self.num_heads = num_heads
         self.dim = dim
-        pos_dim  = 768
-        self.pos_dim = 768
         self.num_patches = num_patches
         head_dim = dim // num_heads
         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
@@ -58,21 +53,21 @@ class Attention(nn.Module):
         
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
-        self.pos_proj = nn.Linear(pos_dim, num_heads)
+        self.pos_proj = nn.Linear(3, num_heads)
         self.proj_drop = nn.Dropout(proj_drop)
-        self.pos_emb   = torch.zeros(1, num_patches, num_patches, pos_dim)
+        self.rel_indices = rel_indices.to('cuda')
         
         if use_local_init :
             self.local_init()
 
-        self.pos_emb = nn.Parameter(self.pos_emb)
+        # self.pos_emb = nn.Parameter(self.pos_emb)
         
     def forward(self, x):
         B, N, C = x.shape
         
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        pos_score = self.pos_emb.expand(B, -1, -1,-1)
+        pos_score = self.rel_indices.expand(B, -1, -1,-1)
         
         pos_score = self.pos_proj(pos_score).permute(0,3,1,2)
         attn = ((q @ k.transpose(-2, -1)) + pos_score) * self.scale
@@ -84,22 +79,22 @@ class Attention(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
+
+    def get_attention_map(self, return_map = False):
+        attn_map = self.pos_proj(self.rel_indices).squeeze()
+        attn_map = attn_map.softmax(dim=-1)
+        distances = self.rel_indices.squeeze()[:,:,2]**.5
+        dist = torch.einsum('nm,nmh->h', (distances, attn_map)).mean()
+        dist = dist.item() / attn_map.size(0)**2
+        if return_map:
+            return dist, attn_map
+        else:
+            return dist
     
     def local_init(self):
         
         self.qkv.weight[:self.dim * 2].data.fill_(0)
-        img_size = int(self.num_patches**.5)
         
-        for i in range(self.pos_dim//2):
-            ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
-            indx = ind.repeat(img_size,img_size)
-            indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
-            indd = indx**2 + indy**2
-            self.pos_emb[:,:,:,0] = indx
-            self.pos_emb[:,:,:,1] = indy
-            self.pos_emb[:,:,:,2] = indd
-            self.pos_emb[:,:,:,3:].fill_(0)
-                            
         kernel_size = int(self.num_heads**.5)
         for h1 in range(kernel_size):
             for h2 in range(kernel_size):
@@ -129,6 +124,7 @@ class Attention2(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+            
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
@@ -146,11 +142,11 @@ class Attention2(nn.Module):
 class Block(nn.Module):
 
     def __init__(self, dim, num_heads,num_patches=196, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, use_local_init=True):
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, use_local_init=True, rel_indices=None):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
-            dim, num_heads=num_heads, num_patches=num_patches, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, use_local_init=use_local_init)
+            dim, num_heads=num_heads, num_patches=num_patches, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, use_local_init=use_local_init, rel_indices=rel_indices)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -273,11 +269,21 @@ class VisionTransformer(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
+        img_size = int(num_patches**.5)
+        self.rel_indices   = torch.zeros(1, num_patches, num_patches, 3)
+        ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
+        indx = ind.repeat(img_size,img_size)
+        indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
+        indd = indx**2 + indy**2
+        self.rel_indices[:,:,:,0] = indx
+        self.rel_indices[:,:,:,1] = indy
+        self.rel_indices[:,:,:,2] = indd                        
+
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList([
             Block(
                 dim=embed_dim, num_heads=num_heads,num_patches=num_patches, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, use_local_init=use_local_init)
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, use_local_init=use_local_init, rel_indices=self.rel_indices)
             if i<local_up_to_layer else
             Block2(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,

@@ -22,7 +22,7 @@ os.environ["NCCL_SOCKET_IFNAME"] = "front0"
 def parse_args():
     classification_parser = classification.get_args_parser()
     parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
-    parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
+    parser.add_argument("--ngpus", default=4, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
     parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
     parser.add_argument("--job_dir", default="", type=str, help="Job dir. Leave empty for automatic.")
@@ -38,8 +38,7 @@ def get_shared_folder() -> Path:
     user = os.getenv("USER")
     if Path("/checkpoint/").is_dir():
         p = Path(f"/checkpoint/{user}/deit")
-        # p = p / str(int(time.time()))
-        p = p / "1610566299"
+        p = p / 'r.'+str(int(time.time()))
         p.mkdir(exist_ok=True)
         return p
     raise RuntimeError("No shared folder available")
@@ -93,9 +92,9 @@ def main():
 
     shared_folder = get_shared_folder()
 
-    for local_up_to_layer in [0,2,4,6,8,10]:
+    for sampling_ratio in [.01, .05, .1, .5, 1.]:
 
-        args.job_dir = shared_folder / "local_up_to_{}".format(local_up_to_layer)
+        args.job_dir = shared_folder / "sampling_ratio_{}".format(sampling_ratio)
 
         # Note that the folder will depend on the job_id, to easily track experiments
         executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
@@ -128,9 +127,10 @@ def main():
 
 
         args.dist_url = get_init_file().as_uri()
-        args.output_dir = args.job_dir 
-        args.local_up_to_layer = local_up_to_layer
-        args.model = 'deit_small_patch16_224'
+        args.output_dir = args.job_dir
+
+        args.sampling_ratio = sampling_ratio
+        args.batch_size = 64
 
         trainer = Trainer(args)
         job = executor.submit(trainer)

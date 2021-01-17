@@ -10,6 +10,7 @@ import numpy as np
 import time
 import torch
 import torch.backends.cudnn as cudnn
+from torchsummary import summary
 import json
 
 from pathlib import Path
@@ -34,7 +35,7 @@ def get_args_parser():
     parser.add_argument('--epochs', default=300, type=int)
 
     # Model parameters
-    parser.add_argument('--model', default='deit_tiny_patch16_224', type=str, metavar='MODEL',
+    parser.add_argument('--model', default='deit_small_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
 
@@ -134,6 +135,8 @@ def get_args_parser():
                         help='dataset path')
     parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
+    parser.add_argument('--sampling_ratio', default=1.,
+                        type=float, help='fraction of samples to keep in the training set')
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
@@ -183,7 +186,7 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
+    dataset_train, args.nb_classes = build_dataset(is_train=True, args=args, sampling_ratio=args.sampling_ratio)
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
     if True:  # args.distributed:
@@ -233,9 +236,11 @@ def main(args):
         local_up_to_layer=args.local_up_to_layer,
         use_local_init=args.use_local_init
     )
+    print(summary(model.cuda(), (3, 224, 224), args.batch_size))
 
     # TODO: finetuning
 
+    print(model)
     model.to(device)
 
     model_ema = None
@@ -272,12 +277,15 @@ def main(args):
         criterion = torch.nn.CrossEntropyLoss()
 
     output_dir = Path(args.output_dir)
+    torch.save(args, output_dir / "args.pyT")
+
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
+            
         model_without_ddp.load_state_dict(checkpoint['model'])
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -291,9 +299,11 @@ def main(args):
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
 
+
     print("Start training")
     start_time = time.time()
     max_accuracy = 0.0
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
@@ -322,8 +332,13 @@ def main(args):
         max_accuracy = max(max_accuracy, test_stats["acc1"])
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
+        attn_dist = {}
+        for l in range(args.local_up_to_layer):
+            attn_dist[l] = model.blocks[l].attn.get_attention_map()   
+
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
+                     **{f'attn_dist_{k}': v for k, v in attn_dist.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
 
