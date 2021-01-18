@@ -22,7 +22,7 @@ os.environ["NCCL_SOCKET_IFNAME"] = "front0"
 def parse_args():
     classification_parser = classification.get_args_parser()
     parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
-    parser.add_argument("--ngpus", default=4, type=int, help="Number of gpus to request on each node")
+    parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
     parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
     parser.add_argument("--job_dir", default="", type=str, help="Job dir. Leave empty for automatic.")
@@ -38,16 +38,15 @@ def get_shared_folder() -> Path:
     user = os.getenv("USER")
     if Path("/checkpoint/").is_dir():
         p = Path(f"/checkpoint/{user}/deit")
-        p = p / 'r.'+str(int(time.time()))
+        p = p / str(int(time.time()))
         p.mkdir(exist_ok=True)
         return p
     raise RuntimeError("No shared folder available")
 
 
-def get_init_file():
+def get_init_file(shared_folder):
     # Init file must not exist, but it's parent dir must exist.
-    os.makedirs(str(get_shared_folder()), exist_ok=True)
-    init_file = get_shared_folder() / f"{uuid.uuid4().hex}_init"
+    init_file = shared_folder / f"{uuid.uuid4().hex}_init"
     if init_file.exists():
         os.remove(str(init_file))
     return init_file
@@ -67,7 +66,7 @@ class Trainer(object):
         import os
         import submitit
 
-        self.args.dist_url = get_init_file().as_uri()
+        self.args.dist_url = get_init_file(self.args.shared_dir).as_uri()
         checkpoint_file = os.path.join(self.args.output_dir, "checkpoint.pth")
         if os.path.exists(checkpoint_file):
             self.args.resume = checkpoint_file
@@ -93,49 +92,51 @@ def main():
     shared_folder = get_shared_folder()
 
     for sampling_ratio in [.01, .05, .1, .5, 1.]:
+        for local in [False, True]:
 
-        args.job_dir = shared_folder / "sampling_ratio_{}".format(sampling_ratio)
+            args.shared_dir = shared_folder
+            args.job_dir = shared_folder / "sampling_{}_local_{}".format(sampling_ratio, local)
 
-        # Note that the folder will depend on the job_id, to easily track experiments
-        executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
+            # Note that the folder will depend on the job_id, to easily track experiments
+            executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
 
-        num_gpus_per_node = args.ngpus
-        nodes = args.nodes
-        timeout_min = args.timeout
+            num_gpus_per_node = args.ngpus
+            nodes = args.nodes
+            timeout_min = args.timeout
 
-        partition = args.partition
-        kwargs = {}
-        if args.use_volta32:
-            kwargs['slurm_constraint'] = 'volta32gb'
-        if args.comment:
-            kwargs['slurm_comment'] = args.comment
+            partition = args.partition
+            kwargs = {}
+            if args.use_volta32:
+                kwargs['slurm_constraint'] = 'volta32gb'
+            if args.comment:
+                kwargs['slurm_comment'] = args.comment
 
-        executor.update_parameters(
-            mem_gb=40 * num_gpus_per_node,
-            gpus_per_node=num_gpus_per_node,
-            tasks_per_node=num_gpus_per_node,  # one task per GPU
-            cpus_per_task=10,
-            nodes=nodes,
-            timeout_min=timeout_min,  # max is 60 * 72
-            # Below are cluster dependent parameters
-            slurm_partition=partition,
-            slurm_signal_delay_s=120,
-            **kwargs
-        )
+            executor.update_parameters(
+                mem_gb=40 * num_gpus_per_node,
+                gpus_per_node=num_gpus_per_node,
+                tasks_per_node=num_gpus_per_node,  # one task per GPU
+                cpus_per_task=10,
+                nodes=nodes,
+                timeout_min=timeout_min,  # max is 60 * 72
+                # Below are cluster dependent parameters
+                slurm_partition=partition,
+                slurm_signal_delay_s=120,
+                **kwargs
+            )
 
-        executor.update_parameters(name="deit")
+            executor.update_parameters(name="deit")
 
 
-        args.dist_url = get_init_file().as_uri()
-        args.output_dir = args.job_dir
+            args.dist_url = get_init_file(shared_folder).as_uri()
+            args.output_dir = args.job_dir
 
-        args.sampling_ratio = sampling_ratio
-        args.batch_size = 64
+            args.sampling_ratio = sampling_ratio
+            args.local_up_to_layer = 6 if local else 0
 
-        trainer = Trainer(args)
-        job = executor.submit(trainer)
+            trainer = Trainer(args)
+            job = executor.submit(trainer)
 
-        print("Submitted job_id:", job.job_id)
+            print("Submitted job_id:", job.job_id)
 
 if __name__ == "__main__":
     main()

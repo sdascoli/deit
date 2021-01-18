@@ -165,7 +165,9 @@ def get_args_parser():
     # locality parameters
     parser.add_argument('--use_local_init', default=1, type=int,
                         help='whether to use the local init')
-    parser.add_argument('--local_up_to_layer', default=3, type=int,
+    parser.add_argument('--class_token_in_local_layers', default=0, type=int,
+                        help='whether to use the class token in the local layers')
+    parser.add_argument('--local_up_to_layer', default=6, type=int,
                         help='number of local layers')
     
     return parser
@@ -234,7 +236,8 @@ def main(args):
         drop_path_rate=args.drop_path,
         drop_block_rate=args.drop_block,
         local_up_to_layer=args.local_up_to_layer,
-        use_local_init=args.use_local_init
+        use_local_init=args.use_local_init,
+        class_token_in_local_layers=args.class_token_in_local_layers
     )
     print(summary(model.cuda(), (3, 224, 224), args.batch_size))
 
@@ -334,7 +337,7 @@ def main(args):
 
         attn_dist = {}
         for l in range(args.local_up_to_layer):
-            attn_dist[l] = model.blocks[l].attn.get_attention_map()   
+            attn_dist[l] = model_without_ddp.blocks[l].attn.get_attention_map()
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},

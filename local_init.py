@@ -40,11 +40,10 @@ class Mlp(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=8, num_patches=196, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., use_local_init=True, rel_indices=None):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., use_local_init=True, rel_indices=None):
         super().__init__()
         self.num_heads = num_heads
         self.dim = dim
-        self.num_patches = num_patches
         head_dim = dim // num_heads
         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
         self.scale = qk_scale or head_dim ** -0.5
@@ -59,8 +58,6 @@ class Attention(nn.Module):
         
         if use_local_init :
             self.local_init()
-
-        # self.pos_emb = nn.Parameter(self.pos_emb)
         
     def forward(self, x):
         B, N, C = x.shape
@@ -73,7 +70,6 @@ class Attention(nn.Module):
         attn = ((q @ k.transpose(-2, -1)) + pos_score) * self.scale
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
-
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
@@ -141,12 +137,12 @@ class Attention2(nn.Module):
     
 class Block(nn.Module):
 
-    def __init__(self, dim, num_heads,num_patches=196, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
+    def __init__(self, dim, num_heads,  mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, use_local_init=True, rel_indices=None):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
-            dim, num_heads=num_heads, num_patches=num_patches, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, use_local_init=use_local_init, rel_indices=rel_indices)
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, use_local_init=use_local_init, rel_indices=rel_indices)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -251,10 +247,11 @@ class VisionTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0., hybrid_backbone=None, norm_layer=nn.LayerNorm, global_pool=None,
-                 local_up_to_layer=3, use_local_init=True):
+                 local_up_to_layer=3, use_local_init=True, class_token_in_local_layers=False):
         super().__init__()
         self.num_classes = num_classes
         self.local_up_to_layer = local_up_to_layer
+        self.class_token_in_local_layers=class_token_in_local_layers
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
 
         if hybrid_backbone is not None:
@@ -264,25 +261,34 @@ class VisionTransformer(nn.Module):
             self.patch_embed = PatchEmbed(
                 img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
         num_patches = self.patch_embed.num_patches
-
+        self.num_patches = num_patches
+        
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
+        if class_token_in_local_layers: num_patches +=1
         img_size = int(num_patches**.5)
         self.rel_indices   = torch.zeros(1, num_patches, num_patches, 3)
         ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
         indx = ind.repeat(img_size,img_size)
         indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
         indd = indx**2 + indy**2
-        self.rel_indices[:,:,:,0] = indx
-        self.rel_indices[:,:,:,1] = indy
-        self.rel_indices[:,:,:,2] = indd                        
+        if not class_token_in_local_layers:
+            self.rel_indices[:,:,:,0] = indx
+            self.rel_indices[:,:,:,1] = indy
+            self.rel_indices[:,:,:,2] = indd
+        else:
+            self.rel_indices[:,:-1,:-1,0] = indx
+            self.rel_indices[:,:-1,:-1,1] = indy
+            self.rel_indices[:,:-1,:-1,2] = indd                        
+            self.rel_indices[:,:-1,:,:].fill_(0)
+            self.rel_indices[:,:,:-1,:].fill_(0)
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList([
             Block(
-                dim=embed_dim, num_heads=num_heads,num_patches=num_patches, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, use_local_init=use_local_init, rel_indices=self.rel_indices)
             if i<local_up_to_layer else
             Block2(
@@ -331,10 +337,16 @@ class VisionTransformer(nn.Module):
         x = x + self.pos_embed
         x = self.pos_drop(x)
 
-        for u,blk in enumerate(self.blocks):
-            if u == self.local_up_to_layer:
-                x = torch.cat((cls_tokens, x), dim=1)
-            x = blk(x)
+        if self.class_token_in_local_layers:
+            x = torch.cat((cls_tokens, x), dim=1)
+            for u,blk in enumerate(self.blocks):
+                x = blk(x)
+
+        else:
+            for u,blk in enumerate(self.blocks):
+                if u == self.local_up_to_layer :
+                    x = torch.cat((cls_tokens, x), dim=1)
+                x = blk(x)
 
         x = self.norm(x)
         return x[:, 0]

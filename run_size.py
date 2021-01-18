@@ -91,50 +91,53 @@ def main():
 
     shared_folder = get_shared_folder()
 
-    for local_up_to_layer in [0,2,4,6,8,10]:
+    for model in ['deit_tiny_patch16_224', 'deit_small_patch16_224', 'deit_base_patch16_224']:
+        for local in [False, True]:
 
-        args.shared_dir = shared_folder
-        args.job_dir = shared_folder / "local_up_to_{}".format(local_up_to_layer)
+            args.shared_dir = shared_folder
+            args.job_dir = shared_folder / "model_{}_local_{}".format(model, local)
 
-        # Note that the folder will depend on the job_id, to easily track experiments
-        executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
+            # Note that the folder will depend on the job_id, to easily track experiments
+            executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
 
-        num_gpus_per_node = args.ngpus
-        nodes = args.nodes
-        timeout_min = args.timeout
+            num_gpus_per_node = args.ngpus
+            nodes = args.nodes
+            timeout_min = args.timeout
 
-        partition = args.partition
-        kwargs = {}
-        if args.use_volta32:
-            kwargs['slurm_constraint'] = 'volta32gb'
-        if args.comment:
-            kwargs['slurm_comment'] = args.comment
+            partition = args.partition
+            kwargs = {}
+            if args.use_volta32:
+                kwargs['slurm_constraint'] = 'volta32gb'
+            if args.comment:
+                kwargs['slurm_comment'] = args.comment
 
-        executor.update_parameters(
-            mem_gb=40 * num_gpus_per_node,
-            gpus_per_node=num_gpus_per_node,
-            tasks_per_node=num_gpus_per_node,  # one task per GPU
-            cpus_per_task=10,
-            nodes=nodes,
-            timeout_min=timeout_min,  # max is 60 * 72
-            # Below are cluster dependent parameters
-            slurm_partition=partition,
-            slurm_signal_delay_s=120,
-            **kwargs
-        )
+            executor.update_parameters(
+                mem_gb=40 * num_gpus_per_node,
+                gpus_per_node=num_gpus_per_node,
+                tasks_per_node=num_gpus_per_node,  # one task per GPU
+                cpus_per_task=10,
+                nodes=nodes,
+                timeout_min=timeout_min,  # max is 60 * 72
+                # Below are cluster dependent parameters
+                slurm_partition=partition,
+                slurm_signal_delay_s=120,
+                **kwargs
+            )
 
-        executor.update_parameters(name="deit")
+            executor.update_parameters(name="deit")
 
 
-        args.dist_url = get_init_file(shared_folder).as_uri()
-        args.output_dir = args.job_dir 
-        args.local_up_to_layer = local_up_to_layer
-        args.model = 'deit_small_patch16_224'
+            args.dist_url = get_init_file(shared_folder).as_uri()
+            args.output_dir = args.job_dir
 
-        trainer = Trainer(args)
-        job = executor.submit(trainer)
+            args.batch_size = 32
+            args.model = model
+            args.use_local_init = 1 if local else 0
 
-        print("Submitted job_id:", job.job_id)
+            trainer = Trainer(args)
+            job = executor.submit(trainer)
+
+            print("Submitted job_id:", job.job_id)
 
 if __name__ == "__main__":
     main()
