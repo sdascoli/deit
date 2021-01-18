@@ -132,7 +132,7 @@ def main():
 
             args.batch_size = 32
             args.model = model
-            args.use_local_init = 1 if local else 0
+            args.local_up_to_layer = 6 if local else 0
 
             trainer = Trainer(args)
             job = executor.submit(trainer)
