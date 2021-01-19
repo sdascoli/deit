@@ -76,11 +76,17 @@ class Attention(nn.Module):
         x = self.proj_drop(x)
         return x
 
-    def get_attention_map(self, return_map = False):
-        attn_map = self.pos_proj(self.rel_indices).squeeze()
-        attn_map = attn_map.softmax(dim=-1)
+    def get_attention_map(self, x, return_map = False):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        pos_score = self.rel_indices.expand(B, -1, -1,-1)
+        pos_score = self.pos_proj(pos_score).permute(0,3,1,2)
+        attn_map = ((q @ k.transpose(-2, -1)) + pos_score) * self.scale
+        attn_map = attn_map.softmax(dim=-1).mean(0)
+        
         distances = self.rel_indices.squeeze()[:,:,2]**.5
-        dist = torch.einsum('nm,nmh->h', (distances, attn_map)).mean()
+        dist = torch.einsum('nm,hnm->h', (distances, attn_map)).mean()
         dist = dist.item() / attn_map.size(0)**2
         if return_map:
             return dist, attn_map
@@ -120,6 +126,29 @@ class Attention2(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+
+    def get_attention_map(self, x, return_map = False):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        attn_map = (q @ k.transpose(-2, -1)) * self.scale
+        attn_map = attn_map.softmax(dim=-1).mean(0)
+
+        img_size = int(N**.5)
+        ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
+        indx = ind.repeat(img_size,img_size)
+        indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
+        indd = indx**2 + indy**2
+        distances = indd**.5
+        distances = distances.to('cuda')
+
+        dist = torch.einsum('nm,hnm->h', (distances, attn_map)).mean()
+        dist = dist.item() / attn_map.size(0)**2
+        if return_map:
+            return dist, attn_map
+        else:
+            return dist
+
             
     def forward(self, x):
         B, N, C = x.shape

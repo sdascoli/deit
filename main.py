@@ -10,8 +10,8 @@ import numpy as np
 import time
 import torch
 import torch.backends.cudnn as cudnn
-from torchsummary import summary
 import json
+# from torchsummary import summary
 
 from pathlib import Path
 
@@ -133,7 +133,7 @@ def get_args_parser():
     # Dataset parameters
     parser.add_argument('--data-path', default='/datasets01/imagenet_full_size/061417/', type=str,
                         help='dataset path')
-    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
+    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR10', 'CIFAR100', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
     parser.add_argument('--sampling_ratio', default=1.,
                         type=float, help='fraction of samples to keep in the training set')
@@ -147,6 +147,7 @@ def get_args_parser():
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--save_every', default=None, type=int, help='save model every epochs')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
@@ -239,7 +240,7 @@ def main(args):
         use_local_init=args.use_local_init,
         class_token_in_local_layers=args.class_token_in_local_layers
     )
-    print(summary(model.cuda(), (3, 224, 224), args.batch_size))
+    # print(summary(model.cuda(), (3, 224, 224), args.batch_size))
 
     # TODO: finetuning
 
@@ -335,13 +336,20 @@ def main(args):
         max_accuracy = max(max_accuracy, test_stats["acc1"])
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
-        attn_dist = {}
-        for l in range(args.local_up_to_layer):
-            attn_dist[l] = model_without_ddp.blocks[l].attn.get_attention_map()
+        # if args.save_every is not None:
+        #     if epoch%save_every == 0:
+        #         checkpoint_path = [output_dir / 'checkpoint_{}.pth'.format(epoch)]
+        #         utils.save_on_master({
+        #                 'model': model_without_ddp.state_dict(),
+        #                 'optimizer': optimizer.state_dict(),
+        #                 'lr_scheduler': lr_scheduler.state_dict(),
+        #                 'epoch': epoch,
+        #                 'model_ema': get_state_dict(model_ema),
+        #                 'args': args,
+        #             }, checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
-                     **{f'attn_dist_{k}': v for k, v in attn_dist.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
 

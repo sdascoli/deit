@@ -133,7 +133,12 @@ class ImageNetDataset(SubsampledDatasetFolder):
 def build_dataset(is_train, args, sampling_ratio=1):
     transform = build_transform(is_train, args)
 
-    if args.data_set == 'CIFAR':
+    if args.data_set == 'CIFAR10':
+        args.data_path = "/datasets01/cifar-pytorch/11222017/"
+        dataset = datasets.CIFAR10(args.data_path, train=is_train, transform=transform)
+        nb_classes = 10
+    if args.data_set == 'CIFAR100':
+        args.data_path = "/datasets01/cifar100/022818/data/"
         dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)
         nb_classes = 100
     elif args.data_set == 'IMNET':
