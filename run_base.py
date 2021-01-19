@@ -129,7 +129,7 @@ def main():
         args.dist_url = get_init_file(shared_folder).as_uri()
         args.output_dir = args.job_dir
 
-        args.batch_size = 64
+        args.batch_size = 32
         args.model = 'deit_base_patch16_224'
         args.local_up_to_layer = 11 if local else 0
 
