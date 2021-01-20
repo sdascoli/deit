@@ -136,7 +136,9 @@ def get_args_parser():
     parser.add_argument('--data-set', default='IMNET', choices=['CIFAR10', 'CIFAR100', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
     parser.add_argument('--sampling_ratio', default=1.,
-                        type=float, help='fraction of samples to keep in the training set')
+                        type=float, help='fraction of samples to keep in the training set of imagenet')
+    parser.add_argument('--nb_classes', default=None,
+                        type=int, help='number of classes in imagenet')
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
@@ -166,10 +168,18 @@ def get_args_parser():
     # locality parameters
     parser.add_argument('--use_local_init', default=1, type=int,
                         help='whether to use the local init')
+    parser.add_argument('--freeze_local_init', default=0, type=int,
+                        help='whether to freeze the local init')
     parser.add_argument('--class_token_in_local_layers', default=0, type=int,
                         help='whether to use the class token in the local layers')
-    parser.add_argument('--local_up_to_layer', default=6, type=int,
+    parser.add_argument('--local_up_to_layer', default=10, type=int,
                         help='number of local layers')
+    parser.add_argument('--locality_width', default=1., type=float,
+                        help='number of local layers')
+    parser.add_argument('--locality_distance', default=5., type=float,
+                        help='number of local layers')
+    parser.add_argument('--local_dim', default=1, type=int,
+                        help='dimension of local embeddings')
     
     return parser
 
@@ -189,7 +199,7 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train, args.nb_classes = build_dataset(is_train=True, args=args, sampling_ratio=args.sampling_ratio)
+    dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
     if True:  # args.distributed:
@@ -238,7 +248,10 @@ def main(args):
         drop_block_rate=args.drop_block,
         local_up_to_layer=args.local_up_to_layer,
         use_local_init=args.use_local_init,
-        class_token_in_local_layers=args.class_token_in_local_layers
+        class_token_in_local_layers=args.class_token_in_local_layers,
+        locality_width=args.locality_width,
+        locality_distance=args.locality_distance,
+        local_dim=args.local_dim
     )
     # print(summary(model.cuda(), (3, 224, 224), args.batch_size))
 
@@ -262,6 +275,13 @@ def main(args):
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
+
+    if args.freeze_local_init:
+        for l in range(args.local_up_to_layer):
+            for p in model_without_ddp.blocks[l].attn.qk:
+                p.requires_grad=False
+            for p in model_without_ddp.blocks[l].attn.pos_proj:
+                p.requires_grad=False
 
     linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
     args.lr = linear_scaled_lr
@@ -321,6 +341,8 @@ def main(args):
         lr_scheduler.step(epoch)
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
+            if args.save_every is not None:
+                if epoch % args.save_every == 0: checkpoint_paths.append(output_dir / 'checkpoint_{}.pth'.format(epoch))
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),
@@ -336,20 +358,18 @@ def main(args):
         max_accuracy = max(max_accuracy, test_stats["acc1"])
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
-        # if args.save_every is not None:
-        #     if epoch%save_every == 0:
-        #         checkpoint_path = [output_dir / 'checkpoint_{}.pth'.format(epoch)]
-        #         utils.save_on_master({
-        #                 'model': model_without_ddp.state_dict(),
-        #                 'optimizer': optimizer.state_dict(),
-        #                 'lr_scheduler': lr_scheduler.state_dict(),
-        #                 'epoch': epoch,
-        #                 'model_ema': get_state_dict(model_ema),
-        #                 'args': args,
-        #             }, checkpoint_path)
+        attn_distance = {}
+        batch = torch.stack([dataset_val[i][0] for i in range(100)])
+        batch = next(iter(data_loader_val))[0]
+        batch = batch.to(device)
+        batch = model_without_ddp.patch_embed(batch)
+        for l in range(len(model_without_ddp.blocks)):
+            attn_distance[l] = model_without_ddp.blocks[l].attn.get_attention_map(batch)
+        print(attn_distance)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
+                     **{f'attn_distance_{k}': v for k, v in attn_distance.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
 

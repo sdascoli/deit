@@ -40,7 +40,8 @@ class Mlp(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., use_local_init=True, rel_indices=None):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
+                 use_local_init=True, rel_indices=None, locality_width=1., locality_distance=1., local_dim=1):
         super().__init__()
         self.num_heads = num_heads
         self.dim = dim
@@ -48,24 +49,29 @@ class Attention(nn.Module):
         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
         self.scale = qk_scale or head_dim ** -0.5
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)       
+        self.qk = nn.Linear(dim, dim * 2, bias=qkv_bias)       
+        self.v = nn.Linear(dim, dim, bias=qkv_bias)       
         
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
-        self.pos_proj = nn.Linear(3, num_heads)
+        self.pos_proj = nn.Linear(3*local_dim, num_heads)
         self.proj_drop = nn.Dropout(proj_drop)
         self.rel_indices = rel_indices.to('cuda')
+        self.locality_width = locality_width
+        self.locality_distance = locality_distance
+        self.local_dim = local_dim
         
         if use_local_init :
-            self.local_init()
+            self.local_init(locality_width=locality_width, locality_distance=locality_distance)
         
     def forward(self, x):
         B, N, C = x.shape
         
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        qk = self.qk(x).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        v = self.v(x).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qk[0], qk[1], v[0]
         pos_score = self.rel_indices.expand(B, -1, -1,-1)
-        
+
         pos_score = self.pos_proj(pos_score).permute(0,3,1,2)
         attn = ((q @ k.transpose(-2, -1)) + pos_score) * self.scale
         attn = attn.softmax(dim=-1)
@@ -78,32 +84,35 @@ class Attention(nn.Module):
 
     def get_attention_map(self, x, return_map = False):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        qk = self.qk(x).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k = qk[0], qk[1]
         pos_score = self.rel_indices.expand(B, -1, -1,-1)
+
         pos_score = self.pos_proj(pos_score).permute(0,3,1,2)
         attn_map = ((q @ k.transpose(-2, -1)) + pos_score) * self.scale
-        attn_map = attn_map.softmax(dim=-1).mean(0)
+        attn_map = attn_map.mean(0).softmax(dim=-1) # average over batch
         
-        distances = self.rel_indices.squeeze()[:,:,2]**.5
-        dist = torch.einsum('nm,hnm->h', (distances, attn_map)).mean()
-        dist = dist.item() / attn_map.size(0)**2
+        distances = self.rel_indices.squeeze()[:,:,-1]**.5
+        dist = torch.einsum('nm,hnm->h', (distances, attn_map)).mean() # average over heads
+        dist = dist.item() / N
         if return_map:
             return dist, attn_map
         else:
             return dist
     
-    def local_init(self):
+    def local_init(self, locality_width=1., locality_distance=1.):
         
-        self.qkv.weight[:self.dim * 2].data.fill_(0)
+        self.qk.weight.data.fill_(0)
         
         kernel_size = int(self.num_heads**.5)
+        center = (kernel_size-1)/2 if kernel_size%2==0 else kernel_size//2
         for h1 in range(kernel_size):
             for h2 in range(kernel_size):
                 position = h1+kernel_size*h2
-                self.pos_proj.weight.data[position,0] = 2*(h2-kernel_size//2)
-                self.pos_proj.weight.data[position,1] = 2*(h1-kernel_size//2)
-                self.pos_proj.weight.data[position,2] = -1
+                self.pos_proj.weight.data[position,:3*self.local_dim] = -1
+                self.pos_proj.weight.data[position,:2*self.local_dim] = 2*(h1-center)*locality_distance
+                self.pos_proj.weight.data[position,:1*self.local_dim] = 2*(h2-center)*locality_distance
+        self.pos_proj.weight.data *= locality_width
  
 class Attention2(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
@@ -143,7 +152,7 @@ class Attention2(nn.Module):
         distances = distances.to('cuda')
 
         dist = torch.einsum('nm,hnm->h', (distances, attn_map)).mean()
-        dist = dist.item() / attn_map.size(0)**2
+        dist = dist.item() / N
         if return_map:
             return dist, attn_map
         else:
@@ -167,11 +176,12 @@ class Attention2(nn.Module):
 class Block(nn.Module):
 
     def __init__(self, dim, num_heads,  mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, use_local_init=True, rel_indices=None):
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                 **kwargs):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, use_local_init=use_local_init, rel_indices=rel_indices)
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop, **kwargs)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -276,12 +286,13 @@ class VisionTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0., hybrid_backbone=None, norm_layer=nn.LayerNorm, global_pool=None,
-                 local_up_to_layer=3, use_local_init=True, class_token_in_local_layers=False):
+                 local_up_to_layer=3, use_local_init=True, class_token_in_local_layers=False, locality_width=1., locality_distance=1., local_dim=1):
         super().__init__()
         self.num_classes = num_classes
         self.local_up_to_layer = local_up_to_layer
         self.class_token_in_local_layers=class_token_in_local_layers
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.local_dim = local_dim
 
         if hybrid_backbone is not None:
             self.patch_embed = HybridEmbed(
@@ -298,27 +309,28 @@ class VisionTransformer(nn.Module):
 
         if class_token_in_local_layers: num_patches +=1
         img_size = int(num_patches**.5)
-        self.rel_indices   = torch.zeros(1, num_patches, num_patches, 3)
+        self.rel_indices   = torch.zeros(1, num_patches, num_patches, 3*self.local_dim)
         ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
         indx = ind.repeat(img_size,img_size)
         indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
         indd = indx**2 + indy**2
         if not class_token_in_local_layers:
-            self.rel_indices[:,:,:,0] = indx
-            self.rel_indices[:,:,:,1] = indy
-            self.rel_indices[:,:,:,2] = indd
+            self.rel_indices[:,:,:,:3*self.local_dim] = indd.unsqueeze(-1)
+            self.rel_indices[:,:,:,:2*self.local_dim] = indy.unsqueeze(-1)
+            self.rel_indices[:,:,:,:1*self.local_dim] = indx.unsqueeze(-1)
         else:
-            self.rel_indices[:,:-1,:-1,0] = indx
-            self.rel_indices[:,:-1,:-1,1] = indy
-            self.rel_indices[:,:-1,:-1,2] = indd                        
-            self.rel_indices[:,:-1,:,:].fill_(0)
+            self.rel_indices[:,:-1,:-1,:3*self.local_dim] = indd.unsqueeze(-1)
+            self.rel_indices[:,:-1,:-1,:2*self.local_dim] = indy.unsqueeze(-1)
+            self.rel_indices[:,:-1,:-1,:1*self.local_dim] = indx.unsqueeze(-1)
+            self.rel_indices[:,:-1,:,:].fill_(0) # pay attention to the class patch
             self.rel_indices[:,:,:-1,:].fill_(0)
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList([
             Block(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, use_local_init=use_local_init, rel_indices=self.rel_indices)
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                use_local_init=use_local_init, rel_indices=self.rel_indices, locality_width=(locality_width if locality_width>0 else 1/(i+1)), locality_distance=locality_distance, local_dim=self.local_dim)
             if i<local_up_to_layer else
             Block2(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,

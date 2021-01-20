@@ -13,6 +13,7 @@ import os
 import uuid
 from pathlib import Path
 import time
+import shutil
 
 import main as classification
 import submitit
@@ -22,7 +23,7 @@ os.environ["NCCL_SOCKET_IFNAME"] = "front0"
 def parse_args():
     classification_parser = classification.get_args_parser()
     parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
-    parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
+    parser.add_argument("--ngpus", default=4, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
     parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
     parser.add_argument("--job_dir", default="", type=str, help="Job dir. Leave empty for automatic.")
@@ -100,50 +101,54 @@ def main():
     copy_py(shared_folder)
     os.chdir(shared_folder)
 
-    for local_up_to_layer in [0,2,4,6,8,10]:
+    for local_up_to in [0,6]:
+        freezes = [0,1] if local_up_to else [0]
+        for freeze in freezes:
 
-        args.shared_dir = shared_folder
-        args.job_dir = shared_folder / "local_up_to_{}".format(local_up_to_layer)
+            args.shared_dir = shared_folder
+            args.job_dir = shared_folder / "local_{}_freeze_{}".format(bool(local_up_to), bool(freeze))
 
-        # Note that the folder will depend on the job_id, to easily track experiments
-        executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
+            # Note that the folder will depend on the job_id, to easily track experiments
+            executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
 
-        num_gpus_per_node = args.ngpus
-        nodes = args.nodes
-        timeout_min = args.timeout
+            num_gpus_per_node = args.ngpus
+            nodes = args.nodes
+            timeout_min = args.timeout
 
-        partition = args.partition
-        kwargs = {}
-        if args.use_volta32:
-            kwargs['slurm_constraint'] = 'volta32gb'
-        if args.comment:
-            kwargs['slurm_comment'] = args.comment
+            partition = args.partition
+            kwargs = {}
+            if args.use_volta32:
+                kwargs['slurm_constraint'] = 'volta32gb'
+            if args.comment:
+                kwargs['slurm_comment'] = args.comment
 
-        executor.update_parameters(
-            mem_gb=40 * num_gpus_per_node,
-            gpus_per_node=num_gpus_per_node,
-            tasks_per_node=num_gpus_per_node,  # one task per GPU
-            cpus_per_task=10,
-            nodes=nodes,
-            timeout_min=timeout_min,  # max is 60 * 72
-            # Below are cluster dependent parameters
-            slurm_partition=partition,
-            slurm_signal_delay_s=120,
-            **kwargs
-        )
+            executor.update_parameters(
+                mem_gb=40 * num_gpus_per_node,
+                gpus_per_node=num_gpus_per_node,
+                tasks_per_node=num_gpus_per_node,  # one task per GPU
+                cpus_per_task=10,
+                nodes=nodes,
+                timeout_min=timeout_min,  # max is 60 * 72
+                # Below are cluster dependent parameters
+                slurm_partition=partition,
+                slurm_signal_delay_s=120,
+                **kwargs
+            )
 
-        executor.update_parameters(name="deit")
+            executor.update_parameters(name="deit")
+            args.dist_url = get_init_file(shared_folder).as_uri()
+            args.output_dir = args.job_dir 
 
+            args.save_every = 10
+            args.nb_classes = 100
+            args.local_up_to_layer = local_up_to
+            args.freeze_locality = freeze
+            args.model = 'deit_tiny_patch16_224'
 
-        args.dist_url = get_init_file(shared_folder).as_uri()
-        args.output_dir = args.job_dir 
-        args.local_up_to_layer = local_up_to_layer
-        args.model = 'deit_small_patch16_224'
+            trainer = Trainer(args)
+            job = executor.submit(trainer)
 
-        trainer = Trainer(args)
-        job = executor.submit(trainer)
-
-        print("Submitted job_id:", job.job_id)
+            print("Submitted job_id:", job.job_id)
 
 if __name__ == "__main__":
     main()
