@@ -166,19 +166,15 @@ def get_args_parser():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
     # locality parameters
-    parser.add_argument('--use_local_init', default=1, type=int,
-                        help='whether to use the local init')
     parser.add_argument('--freeze_local_init', default=0, type=int,
                         help='whether to freeze the local init')
     parser.add_argument('--class_token_in_local_layers', default=0, type=int,
                         help='whether to use the class token in the local layers')
     parser.add_argument('--local_up_to_layer', default=10, type=int,
                         help='number of local layers')
-    parser.add_argument('--locality_width', default=1., type=float,
+    parser.add_argument('--locality_strength', default=1., type=float,
                         help='number of local layers')
-    parser.add_argument('--locality_distance', default=5., type=float,
-                        help='number of local layers')
-    parser.add_argument('--local_dim', default=1, type=int,
+    parser.add_argument('--locality_dim', default=1, type=int,
                         help='dimension of local embeddings')
     
     return parser
@@ -247,11 +243,9 @@ def main(args):
         drop_path_rate=args.drop_path,
         drop_block_rate=args.drop_block,
         local_up_to_layer=args.local_up_to_layer,
-        use_local_init=args.use_local_init,
         class_token_in_local_layers=args.class_token_in_local_layers,
-        locality_width=args.locality_width,
-        locality_distance=args.locality_distance,
-        local_dim=args.local_dim
+        locality_strength=args.locality_strength,
+        locality_dim=args.locality_dim
     )
     # print(summary(model.cuda(), (3, 224, 224), args.batch_size))
 
