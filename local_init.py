@@ -59,6 +59,7 @@ class Attention(nn.Module):
         self.rel_indices = rel_indices.to('cuda')
         self.locality_strength = locality_strength
         self.locality_dim = locality_dim
+        self.alpha = nn.Parameter(torch.zeros(1))
 
         self.apply(self._init_weights)
         self.local_init(locality_strength=locality_strength)
@@ -91,7 +92,7 @@ class Attention(nn.Module):
         patch_score = (q @ k.transpose(-2, -1)) * self.scale
         patch_score = patch_score.softmax(dim=-1)
         pos_score = pos_score.softmax(dim=-1)
-        attn = patch_score + self.locality_strength*pos_score
+        attn = self.alpha*patch_score + pos_score
         attn /= attn.sum(dim=-1).unsqueeze(-1)
         attn = self.attn_drop(attn)
         return attn
