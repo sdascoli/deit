@@ -68,7 +68,7 @@ def get_args_parser():
     # Learning rate schedule parameters
     parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER',
                         help='LR scheduler (default: "cosine"')
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
+    parser.add_argument('--lr', type=float, default=4e-4, metavar='LR',
                         help='learning rate (default: 5e-4)')
     parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct',
                         help='learning rate noise on/off epoch percentages')
@@ -174,7 +174,7 @@ def get_args_parser():
                         help='number of local layers')
     parser.add_argument('--locality_strength', default=1., type=float,
                         help='number of local layers')
-    parser.add_argument('--locality_dim', default=1, type=int,
+    parser.add_argument('--locality_dim', default=10, type=int,
                         help='dimension of local embeddings')
     
     return parser
@@ -353,17 +353,20 @@ def main(args):
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
         attn_distance = {}
+        locality_param = {}
         batch = torch.stack([dataset_val[i][0] for i in range(100)])
         batch = next(iter(data_loader_val))[0]
         batch = batch.to(device)
         batch = model_without_ddp.patch_embed(batch)
         for l in range(len(model_without_ddp.blocks)):
             attn_distance[l] = model_without_ddp.blocks[l].attn.get_attention_map(batch)
-        print(attn_distance)
+        for l in range(args.local_up_to_layer):
+            locality_param[l] = model_without_ddp.blocks[l].attn.alpha.data.mean().item()
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
                      **{f'attn_distance_{k}': v for k, v in attn_distance.items()},
+                     **{f'locality_param_{k}': v for k, v in locality_param.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
 

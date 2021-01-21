@@ -59,7 +59,7 @@ class Attention(nn.Module):
         self.rel_indices = rel_indices.to('cuda')
         self.locality_strength = locality_strength
         self.locality_dim = locality_dim
-        self.alpha = nn.Parameter(torch.zeros(1))
+        self.alpha = nn.Parameter(torch.ones(1,self.num_heads,1,1))
 
         self.apply(self._init_weights)
         self.local_init(locality_strength=locality_strength)
@@ -88,11 +88,11 @@ class Attention(nn.Module):
         qk = self.qk(x).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k = qk[0], qk[1]
         pos_score = self.rel_indices.expand(B, -1, -1,-1)
-        pos_score = self.pos_proj(pos_score).permute(0,3,1,2)
+        pos_score = self.pos_proj(pos_score).permute(0,3,1,2) / self.locality_dim
         patch_score = (q @ k.transpose(-2, -1)) * self.scale
         patch_score = patch_score.softmax(dim=-1)
         pos_score = pos_score.softmax(dim=-1)
-        attn = self.alpha*patch_score + pos_score
+        attn = (1.-torch.sigmoid(self.alpha)) * patch_score + torch.sigmoid(self.alpha) * pos_score
         attn /= attn.sum(dim=-1).unsqueeze(-1)
         attn = self.attn_drop(attn)
         return attn
@@ -101,7 +101,6 @@ class Attention(nn.Module):
     def get_attention_map(self, x, return_map = False):
 
         attn_map = self.get_attention(x).mean(0) # average over batch
-        
         distances = self.rel_indices.squeeze()[:,:,-1]**.5
         dist = torch.einsum('nm,hnm->h', (distances, attn_map)).mean() # average over heads
         dist = dist.item() / distances.size(0)
@@ -113,7 +112,6 @@ class Attention(nn.Module):
     def local_init(self, locality_strength=1.):
         
         # self.qk.weight.data.fill_(0)
-        # self.qk.weight.data /= locality_strength**.5
         locality_distance = max(1,1/locality_strength**.5)
         
         kernel_size = int(self.num_heads**.5)

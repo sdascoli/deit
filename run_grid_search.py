@@ -23,7 +23,7 @@ os.environ["NCCL_SOCKET_IFNAME"] = "front0"
 def parse_args():
     classification_parser = classification.get_args_parser()
     parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
-    parser.add_argument("--ngpus", default=4, type=int, help="Number of gpus to request on each node")
+    parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
     parser.add_argument("--timeout", default=1000, type=int, help="Duration of the job")
     parser.add_argument("--job_dir", default="", type=str, help="Job dir. Leave empty for automatic.")
@@ -101,11 +101,11 @@ def main():
     copy_py(shared_folder)
     os.chdir(shared_folder)
 
-    for local_dim in [1,5,10]:
-        for strength in [0.01, 0.05, 0.1, 0.5, 1]:
+    for local_up_to_layer in [0,5,10]:
+        for strength in [0.01, 0.1, 1]:
 
             args.shared_dir = shared_folder
-            args.job_dir = shared_folder / "dim_{}_strength{}".format(local_dim,strength)
+            args.job_dir = shared_folder / "layer_{}_strength{}".format(local_up_to_layer,strength)
 
             # Note that the folder will depend on the job_id, to easily track experiments
             executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
@@ -138,12 +138,11 @@ def main():
             args.dist_url = get_init_file(shared_folder).as_uri()
             args.output_dir = args.job_dir 
 
-            args.save_every = 10
+            args.save_every = 50
             args.nb_classes = 100
-            args.local_up_to_layer = 10
-            args.locality_dim = local_dim
+            args.local_up_to_layer = local_up_to_layer
             args.locality_strength = strength
-            args.model = 'deit_tiny_patch16_224'
+            args.model = 'deit_small_patch16_224'
 
             trainer = Trainer(args)
             job = executor.submit(trainer)
