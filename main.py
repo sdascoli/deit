@@ -201,7 +201,7 @@ def main(args):
     if args.data_set == "IMNET":
         sample_size_ratio = args.sampling_ratio * args.nb_classes / 1000
     elif args.data_set.startswith("CIFAR10"):
-        sample_size_ratio = 7200/300
+        sample_size_ratio = 300/7200
     else:
         raise NotImplementedError
     args.epochs = int(args.epochs/sample_size_ratio)
