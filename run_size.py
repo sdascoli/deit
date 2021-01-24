@@ -18,7 +18,9 @@ import shutil
 import main as classification
 import submitit
 
-os.environ["NCCL_SOCKET_IFNAME"] = "front0"
+# os.environ["NCCL_SOCKET_IFNAME"] = "front0"
+# os.environ["GLOO_SOCKET_IFNAME"]=  "front0"
+# os.environ["NCCL_DEBUG"] = "INFO"
 
 def parse_args():
     classification_parser = classification.get_args_parser()
@@ -134,7 +136,7 @@ def main():
                 **kwargs
             )
 
-            executor.update_parameters(name="deit")
+            executor.update_parameters(name="size")
             args.dist_url = get_init_file(shared_folder).as_uri()
             args.output_dir = args.job_dir 
 

@@ -112,6 +112,7 @@ class Attention(nn.Module):
     def local_init(self, locality_strength=1.):
         
         # self.qk.weight.data.fill_(0)
+        self.v.weight.data.copy_(torch.eye(self.dim))
         locality_distance = max(1,1/locality_strength**.5)
         
         kernel_size = int(self.num_heads**.5)

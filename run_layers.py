@@ -13,21 +13,22 @@ import os
 import uuid
 from pathlib import Path
 import time
+import shutil
 
 import main as classification
 import submitit
 
 os.environ["NCCL_SOCKET_IFNAME"] = "front0"
-
+os.environ["GLOO_SOCKET_IFNAME"]=  "front0"
 def parse_args():
     classification_parser = classification.get_args_parser()
     parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
     parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
-    parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
+    parser.add_argument("--timeout", default=1000, type=int, help="Duration of the job")
     parser.add_argument("--job_dir", default="", type=str, help="Job dir. Leave empty for automatic.")
 
-    parser.add_argument("--partition", default="learnfair,dev,priority,scavenge", type=str, help="Partition where to submit")
+    parser.add_argument("--partition", default="dev,priority,learnfair,scavenge", type=str, help="Partition where to submit")
     parser.add_argument("--use_volta32", action='store_true', help="Big models? Use this")
     parser.add_argument('--comment', default="icml", type=str,
                         help='Comment to pass to scheduler, e.g. priority message')
@@ -100,50 +101,51 @@ def main():
     copy_py(shared_folder)
     os.chdir(shared_folder)
 
-    for local_up_to_layer in [0,2,4,6,8,10]:
+    for local_up_to_layer in [0,10]:
+        for sampling_ratio in [0.01, 0.03, 0.1, 0.3]:
 
-        args.shared_dir = shared_folder
-        args.job_dir = shared_folder / "local_up_to_{}".format(local_up_to_layer)
+            args.shared_dir = shared_folder
+            args.job_dir = shared_folder / "layer_{}_sampling_{}".format(local_up_to_layer,sampling_ratio)
 
-        # Note that the folder will depend on the job_id, to easily track experiments
-        executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
+            # Note that the folder will depend on the job_id, to easily track experiments
+            executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
 
-        num_gpus_per_node = args.ngpus
-        nodes = args.nodes
-        timeout_min = args.timeout
+            num_gpus_per_node = args.ngpus
+            nodes = args.nodes
+            timeout_min = args.timeout
 
-        partition = args.partition
-        kwargs = {}
-        if args.use_volta32:
-            kwargs['slurm_constraint'] = 'volta32gb'
-        if args.comment:
-            kwargs['slurm_comment'] = args.comment
+            partition = args.partition
+            kwargs = {}
+            if args.use_volta32:
+                kwargs['slurm_constraint'] = 'volta32gb'
+            if args.comment:
+                kwargs['slurm_comment'] = args.comment
 
-        executor.update_parameters(
-            mem_gb=40 * num_gpus_per_node,
-            gpus_per_node=num_gpus_per_node,
-            tasks_per_node=num_gpus_per_node,  # one task per GPU
-            cpus_per_task=10,
-            nodes=nodes,
-            timeout_min=timeout_min,  # max is 60 * 72
-            # Below are cluster dependent parameters
-            slurm_partition=partition,
-            slurm_signal_delay_s=120,
-            **kwargs
-        )
+            executor.update_parameters(
+                mem_gb=40 * num_gpus_per_node,
+                gpus_per_node=num_gpus_per_node,
+                tasks_per_node=num_gpus_per_node,  # one task per GPU
+                cpus_per_task=10,
+                nodes=nodes,
+                timeout_min=timeout_min,  # max is 60 * 72
+                # Below are cluster dependent parameters
+                slurm_partition=partition,
+                slurm_signal_delay_s=120,
+                **kwargs
+            )
 
-        executor.update_parameters(name="deit")
+            executor.update_parameters(name="deit")
+            args.dist_url = get_init_file(shared_folder).as_uri()
+            args.output_dir = args.job_dir 
 
+            args.local_up_to_layer = local_up_to_layer
+            args.model = "deit_small_patch16_224"
+            args.sampling_ratio = sampling_ratio
 
-        args.dist_url = get_init_file(shared_folder).as_uri()
-        args.output_dir = args.job_dir 
-        args.local_up_to_layer = local_up_to_layer
-        args.model = 'deit_small_patch16_224'
+            trainer = Trainer(args)
+            job = executor.submit(trainer)
 
-        trainer = Trainer(args)
-        job = executor.submit(trainer)
-
-        print("Submitted job_id:", job.job_id)
+            print("Submitted job_id:", job.job_id)
 
 if __name__ == "__main__":
     main()

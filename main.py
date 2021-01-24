@@ -198,6 +198,21 @@ def main(args):
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
+    if args.data_set == "IMNET":
+        sample_size_ratio = args.sampling_ratio * args.nb_classes / 1000
+    elif args.data_set == "CIFAR100":
+        sample_size_ratio = 780/2502
+    elif args.data_set == "CIFAR10":
+        sample_size_ratio = 80/2502
+    else:
+        raise NotImplementedError
+    args.epochs = int(args.epochs/sample_size_ratio)
+    args.decay_epochs = int(args.decay_epochs/sample_size_ratio)
+    args.warmup_epochs = int(args.warmup_epochs/sample_size_ratio)
+    args.cooldown_epochs = int(args.cooldown_epochs/sample_size_ratio)
+    args.patience_epochs = int(args.patience_epochs/sample_size_ratio)
+    args.decay_rate = args.decay_rate*sample_size_ratio
+                
     if True:  # args.distributed:
         num_tasks = utils.get_world_size()
         global_rank = utils.get_rank()
