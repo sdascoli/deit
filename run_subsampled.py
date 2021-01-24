@@ -18,9 +18,9 @@ import shutil
 import main as classification
 import submitit
 
-os.environ["NCCL_SOCKET_IFNAME"] = "front0"
-os.environ["GLOO_SOCKET_IFNAME"]=  "front0"
-os.environ["NCCL_DEBUG"] = "INFO"
+# os.environ["NCCL_SOCKET_IFNAME"] = "front0"
+# os.environ["GLOO_SOCKET_IFNAME"]=  "front0"
+# os.environ["NCCL_DEBUG"] = "INFO"
 
 def parse_args():
     classification_parser = classification.get_args_parser()
