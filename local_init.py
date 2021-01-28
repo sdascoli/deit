@@ -41,7 +41,7 @@ class Mlp(nn.Module):
 
 class Attention(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
-                 rel_indices=None, locality_strength=1., locality_dim=1):
+                 rel_indices=None, locality_strength=1., locality_dim=1, use_local_init=True):
         super().__init__()
         self.num_heads = num_heads
         self.dim = dim
@@ -60,9 +60,9 @@ class Attention(nn.Module):
         self.locality_strength = locality_strength
         self.locality_dim = locality_dim
         self.alpha = nn.Parameter(torch.ones(1,self.num_heads,1,1))
-
         self.apply(self._init_weights)
-        self.local_init(locality_strength=locality_strength)
+        if use_local_init:
+            self.local_init(locality_strength=locality_strength)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -111,9 +111,8 @@ class Attention(nn.Module):
     
     def local_init(self, locality_strength=1.):
         
-        # self.qk.weight.data.fill_(0)
         self.v.weight.data.copy_(torch.eye(self.dim))
-        locality_distance = max(1,1/locality_strength**.5)
+        locality_distance = 1 #max(1,1/locality_strength**.5)
         
         kernel_size = int(self.num_heads**.5)
         # kernel_size = 2
@@ -298,7 +297,8 @@ class VisionTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                  drop_path_rate=0., hybrid_backbone=None, norm_layer=nn.LayerNorm, global_pool=None,
-                 local_up_to_layer=3, class_token_in_local_layers=False, locality_strength=1., locality_dim=1):
+                 local_up_to_layer=3, class_token_in_local_layers=False, locality_strength=1., locality_dim=1,
+                 use_local_init=True):
         super().__init__()
         self.num_classes = num_classes
         self.local_up_to_layer = local_up_to_layer
@@ -342,7 +342,7 @@ class VisionTransformer(nn.Module):
             Block(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-                rel_indices=self.rel_indices, locality_strength=(locality_strength if locality_strength>0 else 1/(i+1)), locality_dim=self.locality_dim)
+                rel_indices=self.rel_indices, locality_strength=(locality_strength if locality_strength>0 else 1/(i+1)), locality_dim=self.locality_dim, use_local_init=use_local_init)
             if i<local_up_to_layer else
             Block2(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,

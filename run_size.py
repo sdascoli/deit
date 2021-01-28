@@ -26,7 +26,7 @@ def parse_args():
     classification_parser = classification.get_args_parser()
     parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
     parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
-    parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
+    parser.add_argument("--nodes", default=2, type=int, help="Number of nodes to request")
     parser.add_argument("--timeout", default=1000, type=int, help="Duration of the job")
     parser.add_argument("--job_dir", default="", type=str, help="Job dir. Leave empty for automatic.")
 
@@ -142,7 +142,8 @@ def main():
 
             args.local_up_to_layer = local_up_to_layer
             args.model = model
-
+            args.lr = 5e-4
+            
             trainer = Trainer(args)
             job = executor.submit(trainer)
 

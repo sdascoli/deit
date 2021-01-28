@@ -166,8 +166,12 @@ def get_args_parser():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
     # locality parameters
+    parser.add_argument('--use_local_init', default=1, type=int,
+                        help='whether to use local init')
     parser.add_argument('--freeze_local_init', default=0, type=int,
                         help='whether to freeze the local init')
+    parser.add_argument('--freeze_mixing_param', default=0, type=int,
+                        help='whether to freeze the mixing param')
     parser.add_argument('--class_token_in_local_layers', default=0, type=int,
                         help='whether to use the class token in the local layers')
     parser.add_argument('--local_up_to_layer', default=10, type=int,
@@ -258,7 +262,8 @@ def main(args):
         local_up_to_layer=args.local_up_to_layer,
         class_token_in_local_layers=args.class_token_in_local_layers,
         locality_strength=args.locality_strength,
-        locality_dim=args.locality_dim
+        locality_dim=args.locality_dim,
+        use_local_init=args.use_local_init
     )
     # print(summary(model.cuda(), (3, 224, 224), args.batch_size))
 
@@ -266,6 +271,18 @@ def main(args):
 
     print(model)
     model.to(device)
+
+    if args.freeze_local_init:
+        for l in range(args.local_up_to_layer):
+            for p in model.blocks[l].attn.parameters():
+                p.requires_grad=False
+            model.blocks[l].attn.alpha.data.fill_(1.e3)
+    if args.freeze_mixing_param:
+        for l in range(args.local_up_to_layer):
+            alpha = model.blocks[l].attn.alpha.data.fill_(0)
+            del(model.blocks[l].attn.alpha)
+            model.blocks[l].attn.alpha = alpha
+
 
     model_ema = None
     if args.model_ema:
@@ -282,13 +299,6 @@ def main(args):
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
-
-    if args.freeze_local_init:
-        for l in range(args.local_up_to_layer):
-            for p in model_without_ddp.blocks[l].attn.qk:
-                p.requires_grad=False
-            for p in model_without_ddp.blocks[l].attn.pos_proj:
-                p.requires_grad=False
 
     linear_scaled_lr = args.lr * args.batch_size * utils.get_world_size() / 512.0
     args.lr = linear_scaled_lr

@@ -151,6 +151,7 @@ def build_dataset(is_train, args):
                               category=args.inat_category, transform=transform)
         nb_classes = dataset.nb_classes
     elif args.data_set == 'INAT19':
+        args.data_path = "/datasets01/inaturalist/090619/"
         dataset = INatDataset(args.data_path, train=is_train, year=2019,
                               category=args.inat_category, transform=transform)
         nb_classes = dataset.nb_classes

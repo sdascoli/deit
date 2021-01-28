@@ -18,8 +18,6 @@ import shutil
 import main as classification
 import submitit
 
-os.environ["NCCL_SOCKET_IFNAME"] = "front0"
-
 def parse_args():
     classification_parser = classification.get_args_parser()
     parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
@@ -101,8 +99,8 @@ def main():
     copy_py(shared_folder)
     os.chdir(shared_folder)
 
-    for local_up_to_layer in [0,5,10]:
-        for strength in [0.01, 0.1, 1]:
+    for local_up_to_layer in [0,2,4,6,8,10]:
+        for strength in [0.1, 1, 10]:
 
             args.shared_dir = shared_folder
             args.job_dir = shared_folder / "layer_{}_strength{}".format(local_up_to_layer,strength)
@@ -138,8 +136,6 @@ def main():
             args.dist_url = get_init_file(shared_folder).as_uri()
             args.output_dir = args.job_dir 
 
-            args.save_every = 50
-            args.nb_classes = 100
             args.local_up_to_layer = local_up_to_layer
             args.locality_strength = strength
             args.model = 'deit_small_patch16_224'

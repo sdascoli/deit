@@ -9,6 +9,7 @@ import torch.nn as nn
 from functools import partial
 
 from local_init import VisionTransformer
+from timm.models.efficientnet import EfficientNet
 from timm.models.vision_transformer import _cfg #, VisionTransformer
 from timm.models.registry import register_model
 
@@ -55,3 +56,4 @@ def deit_base_patch16_224(pretrained=False, **kwargs):
         )
         model.load_state_dict(checkpoint["model"])
     return model
+
