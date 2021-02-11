@@ -1,9 +1,3 @@
-# Copyright (c) 2015-present, Facebook, Inc.
-# All rights reserved.
-#
-# This source code is licensed under the CC-by-NC license found in the
-# LICENSE file in the root directory of this source tree.
-#
 """
 A script to run multinode training with submitit.
 """
@@ -18,7 +12,7 @@ import submitit
 
 def parse_args():
     classification_parser = classification.get_args_parser()
-    parser = argparse.ArgumentParser("Submitit for DeiT", parents=[classification_parser])
+    parser = argparse.ArgumentParser("Submitit for ConViT", parents=[classification_parser])
     parser.add_argument("--ngpus", default=8, type=int, help="Number of gpus to request on each node")
     parser.add_argument("--nodes", default=1, type=int, help="Number of nodes to request")
     parser.add_argument("--timeout", default=2800, type=int, help="Duration of the job")
@@ -115,7 +109,7 @@ def main():
         **kwargs
     )
 
-    executor.update_parameters(name="deit")
+    executor.update_parameters(name="ConViT")
 
     args.dist_url = get_init_file().as_uri()
     args.output_dir = args.job_dir
