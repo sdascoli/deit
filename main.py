@@ -201,19 +201,6 @@ def main(args):
 
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
-
-    if args.data_set == "IMNET":
-        sample_size_ratio = args.sampling_ratio * args.nb_classes / 1000
-    elif args.data_set.startswith("CIFAR10"):
-        sample_size_ratio = 300/7200
-    else:
-        raise NotImplementedError
-    args.epochs = int(args.epochs/sample_size_ratio)
-    args.decay_epochs = int(args.decay_epochs/sample_size_ratio)
-    args.warmup_epochs = int(args.warmup_epochs/sample_size_ratio)
-    args.cooldown_epochs = int(args.cooldown_epochs/sample_size_ratio)
-    args.patience_epochs = int(args.patience_epochs/sample_size_ratio)
-    args.decay_rate = args.decay_rate*sample_size_ratio
                 
     if True:  # args.distributed:
         num_tasks = utils.get_world_size()
@@ -265,12 +252,6 @@ def main(args):
         locality_dim=args.locality_dim,
         use_local_init=args.use_local_init
     )
-    # print(summary(model.cuda(), (3, 224, 224), args.batch_size))
-
-    # TODO: finetuning
-
-    print(model)
-    model.to(device)
 
     if args.freeze_local_init:
         for l in range(args.local_up_to_layer):
@@ -279,10 +260,11 @@ def main(args):
             model.blocks[l].attn.alpha.data.fill_(1.e3)
     if args.freeze_mixing_param:
         for l in range(args.local_up_to_layer):
-            alpha = model.blocks[l].attn.alpha.data.fill_(0)
-            del(model.blocks[l].attn.alpha)
-            model.blocks[l].attn.alpha = alpha
+            model.blocks[l].attn.alpha.data.fill_(0)
+            model.blocks[l].attn.alpha.requires_grad=False
 
+    print(model)
+    model.to(device)
 
     model_ema = None
     if args.model_ema:

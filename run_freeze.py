@@ -103,48 +103,55 @@ def main():
     copy_py(shared_folder)
     os.chdir(shared_folder)
 
-    for ablation in ['freeze_mixing_param', 'use_local_init', 'freeze_local_init']:
-        args.shared_dir = shared_folder
-        args.job_dir = shared_folder / "freeze_mp_{}_use_local_init_{}".format(freeze_mp, use_local_init)
+    for freeze_mp in [0,1]:
+        for use_local_init in [0,1]:
+            for freeze_local_init in [0,1]:
+                for local_up_to in [0,10]:
+                    if local_up_to == 0 and (freeze_mp or freeze_local_init or use_local_init): continue
+                    args.shared_dir = shared_folder
+                    args.job_dir = shared_folder / "freeze_mp_{}_freeze_locality_{}_local_init_{}_local_up_to_{}".format(freeze_mp, freeze_local_init, use_local_init,local_up_to)
 
-        # Note that the folder will depend on the job_id, to easily track experiments
-        executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
+                    # Note that the folder will depend on the job_id, to easily track experiments
+                    executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
 
-        num_gpus_per_node = args.ngpus
-        nodes = args.nodes
-        timeout_min = args.timeout
+                    num_gpus_per_node = args.ngpus
+                    nodes = args.nodes
+                    timeout_min = args.timeout
 
-        partition = args.partition
-        kwargs = {}
-        if args.use_volta32:
-            kwargs['slurm_constraint'] = 'volta32gb'
-        if args.comment:
-            kwargs['slurm_comment'] = args.comment
+                    partition = args.partition
+                    kwargs = {}
+                    if args.use_volta32:
+                        kwargs['slurm_constraint'] = 'volta32gb'
+                    if args.comment:
+                        kwargs['slurm_comment'] = args.comment
 
-        executor.update_parameters(
-            mem_gb=40 * num_gpus_per_node,
-            gpus_per_node=num_gpus_per_node,
-            tasks_per_node=num_gpus_per_node,  # one task per GPU
-            cpus_per_task=10,
-            nodes=nodes,
-            timeout_min=timeout_min,  # max is 60 * 72
-            # Below are cluster dependent parameters
-            slurm_partition=partition,
-            slurm_signal_delay_s=120,
-            **kwargs
-        )
+                    executor.update_parameters(
+                        mem_gb=40 * num_gpus_per_node,
+                        gpus_per_node=num_gpus_per_node,
+                        tasks_per_node=num_gpus_per_node,  # one task per GPU
+                        cpus_per_task=10,
+                        nodes=nodes,
+                        timeout_min=timeout_min,  # max is 60 * 72
+                        # Below are cluster dependent parameters
+                        slurm_partition=partition,
+                        slurm_signal_delay_s=120,
+                        **kwargs
+                    )
 
-        executor.update_parameters(name="freeze")
-        args.dist_url = get_init_file(shared_folder).as_uri()
-        args.output_dir = args.job_dir 
+                    executor.update_parameters(name="freeze")
+                    args.dist_url = get_init_file(shared_folder).as_uri()
+                    args.output_dir = args.job_dir 
 
-        args.freeze_mixing_param = freeze_mp
-        args.use_local_init = use_local_init
+                    args.num_classes = 100
+                    args.freeze_mixing_param = freeze_mp
+                    args.use_local_init = use_local_init
+                    args.freeze_local_init = freeze_local_init
+                    args.local_up_to_layer = local_up_to
 
-        trainer = Trainer(args)
-        job = executor.submit(trainer)
+                    trainer = Trainer(args)
+                    job = executor.submit(trainer)
 
-        print("Submitted job_id:", job.job_id)
+                    print("Submitted job_id:", job.job_id)
 
 if __name__ == "__main__":
     main()

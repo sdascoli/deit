@@ -143,6 +143,8 @@ def main():
             args.local_up_to_layer = local_up_to_layer
             args.model = "deit_small_patch16_224"
             args.sampling_ratio = sampling_ratio
+            args.epochs = int(300 / sampling_ratio)
+            args.warmup_epochs = int(5 / sampling_ratio)
 
             trainer = Trainer(args)
             job = executor.submit(trainer)
