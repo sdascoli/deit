@@ -171,7 +171,7 @@ def get_args_parser():
                         help='number of local layers')
     parser.add_argument('--locality_strength', default=1., type=float,
                         help='number of local layers')
-    parser.add_argument('--locality_dim', default=10, type=int,
+    parser.add_argument('--locality_dim', default=1, type=int,
                         help='dimension of local embeddings')
     
     return parser

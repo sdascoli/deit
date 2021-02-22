@@ -8,9 +8,9 @@ import torch
 import torch.nn as nn
 from functools import partial
 
-from local_init import VisionTransformer
+from convit import VisionTransformer
 from timm.models.efficientnet import EfficientNet
-from timm.models.vision_transformer import _cfg #, VisionTransformer
+from timm.models.vision_transformer import _cfg
 from timm.models.registry import register_model
 
 @register_model

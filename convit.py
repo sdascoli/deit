@@ -30,6 +30,7 @@ class Mlp(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+            
     def forward(self, x):
         x = self.fc1(x)
         x = self.act(x)
